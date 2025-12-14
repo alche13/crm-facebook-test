@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CRM Phân Luồng FB</title>
+    <style>
+        body { font-family: sans-serif; display: flex; }
+        #list-khach { width: 30%; border-right: 1px solid #ccc; padding: 10px; height: 100vh; overflow-y: scroll;}
+        #chat-box { width: 70%; padding: 20px; text-align: center; }
+        
+        .customer-item { padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between;}
+        .customer-item:hover { background-color: #f0f0f0; }
+        
+        /* Trạng thái bị khóa */
+        .locked { background-color: #ffdddd !important; cursor: not-allowed; color: #a00; }
+        .my-lock { background-color: #ddffdd !important; border-left: 5px solid green;}
+        
+        .status-badge { font-size: 0.8em; font-weight: bold;}
+    </style>
+</head>
+<body>
+
+    <script>
+        const ctvName = prompt("Nhập tên của bạn (CTV):", "CTV_" + Math.floor(Math.random()*100));
+    </script>
+
+    <div id="list-khach">
+        <h3>Danh sách khách hàng</h3>
+        <div id="conversations"></div>
+    </div>
+
+    <div id="chat-box">
+        <h2 id="chat-title">Chọn khách để chat</h2>
+        <div id="chat-content" style="display:none;">
+            <p>Đang chat với khách...</p>
+            <button onclick="releaseCustomer()">Xong việc / Nhả khách</button>
+        </div>
+        <div id="lock-warning" style="display:none; color: red; font-weight: bold;">
+            Khách này đang được chăm sóc bởi người khác!
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentCustomerId = null;
+        let allLocks = {};
+
+        // 1. Nhận dữ liệu ban đầu
+        socket.on('init_data', (data) => {
+            renderList(data.conversations, data.activeLocks);
+        });
+
+        // 2. Nhận thông báo có khóa mới (Real-time update)
+        socket.on('update_locks', (locks) => {
+            allLocks = locks;
+            // Cập nhật lại giao diện ngay lập tức
+            updateUI();
+        });
+
+        // 3. Nhận tin nhắn mới từ khách
+        socket.on('new_message', (data) => {
+            // Trong thực tế bạn sẽ append vào list, ở đây mình reload trang cho đơn giản
+            location.reload(); 
+        });
+
+        function renderList(convs, locks) {
+            allLocks = locks;
+            const container = document.getElementById('conversations');
+            container.innerHTML = '';
+
+            convs.forEach(c => {
+                const div = document.createElement('div');
+                div.className = 'customer-item';
+                div.id = `cust-${c.id}`;
+                div.onclick = () => selectCustomer(c.id);
+                
+                div.innerHTML = `
+                    <span>${c.name}</span>
+                    <span class="status-badge" id="badge-${c.id}"></span>
+                `;
+                container.appendChild(div);
+            });
+            updateUI();
+        }
+
+        function updateUI() {
+            // Quét qua tất cả khách hàng để tô màu
+            for (const [custId, owner] of Object.entries(allLocks)) {
+                const el = document.getElementById(`cust-${custId}`);
+                const badge = document.getElementById(`badge-${custId}`);
+                if (el) {
+                    if (owner === ctvName) {
+                        el.className = 'customer-item my-lock'; // Màu xanh
+                        badge.innerText = '(Của tôi)';
+                    } else {
+                        el.className = 'customer-item locked'; // Màu đỏ
+                        badge.innerText = `(Đang chat: ${owner})`;
+                    }
+                }
+            }
+            
+            // Xử lý logic hiển thị khung chat hiện tại
+            if (currentCustomerId) {
+                if (allLocks[currentCustomerId] && allLocks[currentCustomerId] !== ctvName) {
+                    // Nếu đang xem mà bị người khác cướp (hoặc tải trang thấy đã bị khóa)
+                    document.getElementById('chat-content').style.display = 'none';
+                    document.getElementById('lock-warning').style.display = 'block';
+                    document.getElementById('lock-warning').innerText = `Dừng lại! Khách này đang được ${allLocks[currentCustomerId]} rep.`;
+                }
+            }
+        }
+
+        function selectCustomer(id) {
+            // Kiểm tra xem có ai khóa chưa
+            if (allLocks[id] && allLocks[id] !== ctvName) {
+                alert(`Khách này đang do ${allLocks[id]} phụ trách. Bạn không được vào!`);
+                return;
+            }
+
+            currentCustomerId = id;
+            document.getElementById('chat-title').innerText = `Đang chat với ID: ${id}`;
+            
+            // GỬI YÊU CẦU KHÓA LÊN SERVER
+            socket.emit('request_lock', { customerId: id, ctvName: ctvName });
+
+            document.getElementById('chat-content').style.display = 'block';
+            document.getElementById('lock-warning').style.display = 'none';
+        }
+
+        function releaseCustomer() {
+            if (currentCustomerId) {
+                // GỬI YÊU CẦU MỞ KHÓA
+                socket.emit('release_lock', { customerId: currentCustomerId });
+                currentCustomerId = null;
+                document.getElementById('chat-content').style.display = 'none';
+                document.getElementById('chat-title').innerText = "Chọn khách để chat";
+            }
+        }
+    </script>
+</body>
+</html>
